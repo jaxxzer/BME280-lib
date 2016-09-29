@@ -1,29 +1,79 @@
 #include <Wire.h>
 
-#define ADDRESS 0x76
-#define COMPENSATION 0x88
-#define TEMP_MSB 0xFA
-#define TEMP_LSB 0xFB
-#define TEMP_XLSB 0xFC
-#define CTRL_MEAS 0xF4
+// Datasheet p31
+// i2c slave address tie SDO to GND for 0x76, to VDDIO for 0x77
+#define BME280_ADDRESS 0x76
+
+// Datasheet p22
+#define BME280_ADD_COMPENSATION1 0x88
+#define BME280_COMP1_LENGTH 25 // 0x88...0xA1
+#define BME280_ADD_COMPENSATION2 0xE1
+#define BME280_COMP2_LENGTH 7 // 0xE1...0xE7
+
+
+// Datasheet p28,29
+#define BME280_ADD_PRESS 0xF7
+#define BME280_ADD_TEMP 0xFA
+#define BME280_ADD_HUM 0xFD
+
+
+#define BME280_ADD_CTRL_MEAS 0xF4
+
+
+// Datasheet p26
+#define BME280_ADD_CTRL_HUM 0xF2
+
+
+// Datasheet p27
+#define BME280_OVERSAMPLE_SKIP 0
+#define BME280_OVERSAMPLE_1	1
+#define BME280_OVERSAMPLE_2 2
+#define BME280_OVERSAMPLE_4 3
+#define BME280_OVERSAMPLE_8 4
+#define BME280_OVERSAMPLE_16 5
+
+#define BME280_MODE_SLEEP 0
+#define BME280_MODE_FORCE 1
+#define BME280_MODE_NORMAL 3
+
 
 void setup() {
-  // put your setup code here, to run once:
-Serial.begin(115200);
-Wire.begin(ADDRESS);
+	Serial.begin(115200);
+	Wire.begin(BME280_ADDRESS);
+	set_hum_mode(BME280_OVERSAMPLE_1);
+	set_mode(BME280_OVERSAMPLE_1, BME280_OVERSAMPLE_1, BME280_MODE_NORMAL);
 }
 
-	uint16_t T1;
-	int16_t T2;
-	int16_t T3;
+uint16_t dig_T1;
+int16_t dig_T2;
+int16_t dig_T3;
+
+int16_t dig_P1;
+int16_t dig_P2;
+int16_t dig_P3;
+int16_t dig_P4;
+int16_t dig_P5;
+int16_t dig_P6;
+int16_t dig_P7;
+int16_t dig_P8;
+int16_t dig_P9;
+
+int16_t dig_H1;
+int16_t dig_H2;
+int16_t dig_H3;
+int16_t dig_H4;
+int16_t dig_H5;
+int16_t dig_H6;
+
 
 int32_t adc_temperature;
 int32_t temperature;
+int32_t adc_humidity;
+int32_t humidity;
 
 void loop() {
-	set_normal_mode();
+
 	read_calibration();
-  // put your main code here, to run repeatedly:
 
 	adc_temperature = read_temp_adc();
 	Serial.print("\n\nadc_t: ");
@@ -35,51 +85,94 @@ void loop() {
 	Serial.print("\n\nTEMP: ");
 	Serial.print(temperature);
 	Serial.println("\n\n");
+
+	adc_humidity = read_hum_adc();
+	//humidity = calculate_hum(adc_humidity);
 	
 	delay(1000);
 
 }
 
+
+
 int32_t calculate_temp(int32_t adc_T) {
 	int32_t var1, var2, t_fine, T;
-	var1 = ((((adc_T>>3) - ((int32_t)T1<<1))) * ((int32_t)T2)) >> 11;
-	var2 = (((((adc_T>>4) - ((int32_t)T1))*((adc_T>>4) - ((int32_t)T1))) >> 12)*((int32_t)T3)) >> 14;
+	var1 = ((((adc_T>>3) - ((int32_t)dig_T1<<1))) * ((int32_t)dig_T2)) >> 11;
+	var2 = (((((adc_T>>4) - ((int32_t)dig_T1))*((adc_T>>4) - ((int32_t)dig_T1))) >> 12)*((int32_t)dig_T3)) >> 14;
 	t_fine = var1 + var2;
 	T  = (t_fine * 5 + 128) >> 8;
 	return T;
 }
 
+
+// Datasheet p22
 void read_calibration() {
-	Wire.beginTransmission(ADDRESS);
-	Wire.write(COMPENSATION);
+	Wire.beginTransmission(BME280_ADDRESS);
+	Wire.write(BME280_ADD_COMPENSATION1);
 	Wire.endTransmission();
-	Wire.requestFrom(ADDRESS, 10);
+	Wire.requestFrom(BME280_ADDRESS, BME280_COMP1_LENGTH);
 	
-	uint8_t buf[6];
+	uint8_t buf[BME280_COMP1_LENGTH + BME280_COMP2_LENGTH];
 	delay(10);
-			int i = 0;
+	int i = 0;
 	while(Wire.available()) {
 		buf[i++] = Wire.read();
 	}
-	T1 = buf[0] + (buf[1]<<8);
-	T2 = buf[2] + (buf[3]<<8);
-	T3 = buf[4] + (buf[5]<<8);
-//	Serial.print("T1: ");
-//	Serial.print(T1);
-//	Serial.print("\tT2: ");
-//	Serial.print(T2);
-//	Serial.print("\tT3: ");
-//	Serial.println(T3);
+
+	Wire.beginTransmission(BME280_ADDRESS);
+	Wire.write(BME280_ADD_COMPENSATION2);
+	delay(10);
+	Wire.endTransmission();
+	Wire.requestFrom(BME280_ADDRESS, BME280_COMP2_LENGTH);
+	while(Wire.available()) {
+		buf[i++] = Wire.read();
+	}
+
+	i = 0;
+
+	// 0x88
+	dig_T1 = buf[i++] + (buf[i++]<<8); // unsigned short
+	dig_T2 = buf[i++] + (buf[i++]<<8); // signed short
+	dig_T3 = buf[i++] + (buf[i++]<<8); // signed short
+
+	// 0x8E
+	dig_P1 = buf[i++] + (buf[i++]<<8); // unsigned short
+	dig_P2 = buf[i++] + (buf[i++]<<8); // signed short
+	dig_P3 = buf[i++] + (buf[i++]<<8); // signed short
+	dig_P4 = buf[i++] + (buf[i++]<<8); // signed short
+	dig_P5 = buf[i++] + (buf[i++]<<8); // signed short
+	dig_P6 = buf[i++] + (buf[i++]<<8); // signed short
+	dig_P7 = buf[i++] + (buf[i++]<<8); // signed short
+	dig_P8 = buf[i++] + (buf[i++]<<8); // signed short
+	dig_P9 = buf[i++] + (buf[i++]<<8); // signed short
+
+	// 0xA1
+	dig_H1 = buf[i++]; 									// unsigned char
+	dig_H2 = buf[i++] + (buf[i++]<<8); // signed short
+	dig_H3 = buf[i++];									// unsigned char
+
+	// wtf?! notice we dont increment i as we will need same byte in next step
+	dig_H4 = (buf[i++]<<5) | (buf[i] & 0b00001111);  // signed short
+	dig_H5 = (buf[i++] & 0b00001111) + (buf[i++]<<4);
+	dig_H6 = buf[i]; // signed char
+	
+	Serial.println(i); // make sure we kept proper count
+//	Serial.print("dig_T1: ");
+//	Serial.print(dig_T1);
+//	Serial.print("\tdig_T2: ");
+//	Serial.print(dig_T2);
+//	Serial.print("\tdig_T3: ");
+//	Serial.println(dig_T3);
 }
 
 int32_t read_temp_adc() {
-	Wire.beginTransmission(ADDRESS);
-	Wire.write(TEMP_MSB);
+	Wire.beginTransmission(BME280_ADDRESS);
+	Wire.write(BME280_ADD_TEMP);
 	Wire.endTransmission();
-	Wire.requestFrom(ADDRESS, 3);
+	Wire.requestFrom(BME280_ADDRESS, 3);
 	uint8_t buf[3];
 	delay(10);
-			int i = 0;
+	int i = 0;
 	while(Wire.available()) {
 
 		buf[i++] = Wire.read();
@@ -88,19 +181,46 @@ int32_t read_temp_adc() {
 //		Serial.print(": ");
 //		Serial.println((uint8_t)buf[i-1]);
 	}
-
-	uint8_t msb, lsb, xlsb;
 	uint32_t adc_t = 0;
+	// msb, lsb, xlsb
 	adc_t = (buf[0] << 16) + (buf[1] << 8) + buf[2];
 	adc_t = adc_t >> 4;
 	return adc_t;
 }
 
-void set_normal_mode() {
-		Wire.beginTransmission(ADDRESS);
-	Wire.write(CTRL_MEAS);
-	uint8_t mode = 0xFF;
-	Wire.write(mode);
+int32_t read_hum_adc() {
+	Wire.beginTransmission(BME280_ADDRESS);
+	Wire.write(BME280_ADD_HUM);
+	Wire.endTransmission();
+	Wire.requestFrom(BME280_ADDRESS, 2);
+	uint8_t buf[2];
+	delay(10);
+	int i = 0;
+	while(Wire.available()) {
+		buf[i++] = Wire.read();
+	}
+	uint32_t adc_h = 0;
+	adc_h = (buf[0] << 8) + buf[1];
+	return adc_h;
+}
+
+// Datasheet p27
+void set_mode(uint8_t osrs_t, uint8_t osrs_p, uint8_t mode) {
+
+	uint8_t ctrl_meas = (osrs_t<<5) | (osrs_p<<2) | mode;
+	
+	Wire.beginTransmission(BME280_ADDRESS);
+	Wire.write(BME280_ADD_CTRL_MEAS);
+	Wire.write(ctrl_meas);
+	Wire.endTransmission();
+}
+
+// per Datasheet p25 changes to this register only become active after
+// write to ctrl_meas register !!
+void set_hum_mode(uint8_t osrs_h) {
+	Wire.beginTransmission(BME280_ADDRESS);
+	Wire.write(BME280_ADD_CTRL_HUM);
+	Wire.write(osrs_h);
 	Wire.endTransmission();
 }
 
