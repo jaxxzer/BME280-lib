@@ -40,7 +40,7 @@
 void setup() {
 	Serial.begin(115200);
 	Wire.begin(BME280_ADDRESS);
-	set_hum_mode(BME280_OVERSAMPLE_1);
+	set_hum_mode(BME280_OVERSAMPLE_16);
 	set_mode(BME280_OVERSAMPLE_1, BME280_OVERSAMPLE_1, BME280_MODE_NORMAL);
 }
 
@@ -87,16 +87,23 @@ void loop() {
 	Serial.println("\n\n");
 
 	adc_humidity = read_hum_adc();
-	//humidity = calculate_hum(adc_humidity);
+	Serial.print("\n\nadc_h: ");
+	Serial.print(adc_humidity);
+	Serial.println("\n\n");
+	humidity = calculate_humidity(adc_humidity);
+	Serial.print("\n\nhumidity: ");
+	Serial.print((float)adc_humidity/1024.0f);
+	Serial.println("\n\n");
 	
 	delay(1000);
 
 }
 
 
-
+// Datasheet p23
+int32_t t_fine;
 int32_t calculate_temp(int32_t adc_T) {
-	int32_t var1, var2, t_fine, T;
+	int32_t var1, var2, T;
 	var1 = ((((adc_T>>3) - ((int32_t)dig_T1<<1))) * ((int32_t)dig_T2)) >> 11;
 	var2 = (((((adc_T>>4) - ((int32_t)dig_T1))*((adc_T>>4) - ((int32_t)dig_T1))) >> 12)*((int32_t)dig_T3)) >> 14;
 	t_fine = var1 + var2;
@@ -104,6 +111,21 @@ int32_t calculate_temp(int32_t adc_T) {
 	return T;
 }
 
+// Datasheet p23
+int32_t calculate_humidity(int32_t adc_H) {
+	int32_t v_x1_u32r;
+	v_x1_u32r = (t_fine - ((int32_t)76800));
+	v_x1_u32r = (((((adc_H << 14) - (((int32_t)dig_H4) << 20) - (((int32_t)dig_H5) * v_x1_u32r)) +
+		((int32_t)16384)) >> 15) * (((((((v_x1_u32r * ((int32_t)dig_H6)) >> 10) * (((v_x1_u32r *
+		((int32_t)dig_H3)) >> 11) + ((int32_t)32768))) >> 10) + ((int32_t)2097152)) *
+		((int32_t)dig_H2) + 8192) >> 14));
+	v_x1_u32r = (v_x1_u32r - (((((v_x1_u32r >> 15) * (v_x1_u32r >> 15)) >> 7) * ((int32_t)dig_H1)) >> 4));
+	v_x1_u32r = (v_x1_u32r < 0 ? 0 : v_x1_u32r);
+	v_x1_u32r = (v_x1_u32r > 419430400 ? 419430400 : v_x1_u32r);
+	return (uint32_t)(v_x1_u32r>>12);
+		
+	return 0;
+}
 
 // Datasheet p22
 void read_calibration() {
